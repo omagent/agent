@@ -273,7 +273,7 @@ const defaultSettings: Settings = {
   ],
   memoryStrategy: "auto",
   maxContextTokens: 180000,
-  autoSkillLearning: false,
+  autoSkillLearning: true,
 };
 
 export const useAppStore = create<AppState>((set) => ({

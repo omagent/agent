@@ -255,7 +255,7 @@ function defaultStoredConfig(): StoredConfig {
     memoryRuntime: defaultMemoryRuntime(),
     enableThinking: false,
     thinkingLevel: "medium",
-    autoSkillLearning: false,
+    autoSkillLearning: true,
     isConfigured: false,
   };
 }
