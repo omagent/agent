@@ -1415,11 +1415,170 @@ ${hints.join("\n")}
     ];
   }
 
+  private buildWebTools(): ToolDefinition[] {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const td = (t: any): any => t;
+
+    const webFetchTool = {
+      name: "web_fetch",
+      label: "Web Fetch",
+      description:
+        "Fetches a URL, extracts readable content using Firefox Reader View, and returns clean Markdown. Use for retrieving web page content.",
+      parameters: Type.Object({
+        url: Type.String({ description: "HTTP/HTTPS URL to fetch" }),
+        max_chars: Type.Optional(
+          Type.Number({
+            description: "Maximum characters to return (default: 20000)",
+          }),
+        ),
+      }),
+      async execute(
+        _toolCallId: any,
+        params: any,
+        _signal: any,
+        _onUpdate: any,
+        _ctx: any,
+      ) {
+        const { url, max_chars = 20000 } = params as {
+          url: string;
+          max_chars?: number;
+        };
+
+        let parsed: URL;
+        try {
+          parsed = new URL(url);
+        } catch {
+          throw new Error("Invalid URL");
+        }
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+          throw new Error("Only HTTP/HTTPS URLs are supported");
+        }
+        if (AgentRunner.isPrivateHost(parsed.hostname)) {
+          throw new Error(
+            `Cannot fetch private/internal host: ${parsed.hostname}`,
+          );
+        }
+
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
+
+        let response: Response;
+        try {
+          response = await fetch(url, {
+            signal: controller.signal,
+            headers: {
+              "User-Agent":
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+              "Accept-Language": "en-US,en;q=0.9",
+              Accept:
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            },
+          });
+        } finally {
+          clearTimeout(timeout);
+        }
+
+        if (!response.ok) {
+          throw new Error(
+            `HTTP ${response.status}: ${response.statusText}`,
+          );
+        }
+
+        const contentType = response.headers.get("content-type") || "";
+        if (!contentType.includes("text/html")) {
+          throw new Error(
+            `Unsupported content type: ${contentType}. Only text/html is supported.`,
+          );
+        }
+
+        const contentLength = parseInt(
+          response.headers.get("content-length") || "0",
+        );
+        const MAX_HTML_BYTES = 5 * 1024 * 1024; // 5 MB
+        if (contentLength > MAX_HTML_BYTES) {
+          throw new Error(
+            `Page too large (${(contentLength / 1e6).toFixed(1)} MB). Max is 5 MB.`,
+          );
+        }
+
+        const html = await response.text();
+
+        let JSDOM: any, Readability: any, TurndownService: any;
+        try {
+          ({ JSDOM } = await import("jsdom"));
+          ({ Readability } = await import("@mozilla/readability"));
+          TurndownService = (await import("turndown")).default;
+        } catch {
+          throw new Error(
+            "web_fetch dependencies (jsdom, readability, turndown) not available. " +
+              "The app may need to be rebuilt.",
+          );
+        }
+
+        const dom = new JSDOM(html, { url });
+        const reader = new Readability(dom.window.document);
+        const article = reader.parse();
+
+        if (!article || !article.content) {
+          throw new Error(
+            "Could not extract readable content from the page",
+          );
+        }
+
+        const turndown = new TurndownService({
+          headingStyle: "atx",
+          codeBlockStyle: "fenced",
+        });
+        let markdown = turndown.turndown(article.content);
+
+        const title = article.title || dom.window.document.title || "";
+        if (title) {
+          markdown = `## ${title}\n\n${markdown}`;
+        }
+
+        if (markdown.length > max_chars) {
+          markdown = markdown.slice(0, max_chars) + "...";
+        }
+
+        return {
+          content: [{ type: "text" as const, text: markdown }],
+        };
+      },
+    };
+
+    return [td(webFetchTool)];
+  }
+
   /**
    * Check if a command contains sudo
    */
   private static isSudoCommand(command: string): boolean {
     return /\bsudo\b/.test(command);
+  }
+
+  /**
+   * Check if a hostname is a private/internal/loopback address.
+   * Prevents SSRF via web_fetch against internal networks.
+   */
+  private static isPrivateHost(hostname: string): boolean {
+    // Loopback
+    if (
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "::1" ||
+      hostname === "0.0.0.0"
+    ) {
+      return true;
+    }
+    // IPv4 private ranges: 10.x, 172.16-31.x, 192.168.x, 169.254.x
+    if (/^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.)/.test(hostname)) {
+      return true;
+    }
+    // Cloud metadata endpoints
+    if (hostname === "metadata.google.internal") {
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -2612,11 +2771,13 @@ Tool routing:\n
         : [];
 
       const internalBrowserTools = this.buildInternalBrowserTools();
+      const webTools = this.buildWebTools();
 
       const extensionCustomTools = extensionResult.customTools || [];
       const customTools = [
         ...mcpCustomTools,
         ...internalBrowserTools,
+        ...webTools,
         ...extensionCustomTools,
       ];
       if (mcpCustomTools.length > 0) {
@@ -2629,6 +2790,12 @@ Tool routing:\n
         log(
           `[AgentRunner] Registered ${extensionCustomTools.length} extension tools as customTools:`,
           extensionCustomTools.map((t) => t.name).join(", "),
+        );
+      }
+      if (webTools.length > 0) {
+        log(
+          `[AgentRunner] Registered ${webTools.length} web tools as customTools:`,
+          webTools.map((t) => t.name).join(", "),
         );
       }
 

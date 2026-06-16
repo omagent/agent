@@ -49,6 +49,8 @@ export default defineConfig({
                 'ws',
                 'glob',
                 'dotenv',
+                'jsdom',
+                'canvas',
               ],
               output: {
                 // Ensure consistent interop for CJS/ESM
