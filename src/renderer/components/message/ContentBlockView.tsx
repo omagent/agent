@@ -28,6 +28,7 @@ import type {
 } from "../../types";
 import { FileText } from "lucide-react";
 import { CodeBlock } from "./CodeBlock";
+import { MermaidBlock } from "./MermaidBlock";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { ToolUseBlock } from "./ToolUseBlock";
 import { ToolResultBlock } from "./ToolResultBlock";
@@ -237,6 +238,10 @@ export const ContentBlockView = memo(function ContentBlockView({
               {children}
             </code>
           );
+        }
+
+        if (match[1] === "mermaid") {
+          return <MermaidBlock code={String(children).replace(/\n$/, "")} />;
         }
 
         return (
